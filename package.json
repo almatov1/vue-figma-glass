@@ -1,0 +1,41 @@
+{
+  "name": "vue-figma-glass",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Vue 3 glass card adapted from Holybasil figma-glass-effect",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/vue-figma-glass.umd.cjs",
+  "module": "./dist/vue-figma-glass.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/vue-figma-glass.js",
+      "require": "./dist/vue-figma-glass.umd.cjs"
+    }
+  },
+  "scripts": {
+    "build": "vite build && vue-tsc --declaration --emitDeclarationOnly --outDir dist"
+  },
+  "peerDependencies": {
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.0",
+    "typescript": "^5.9.0",
+    "vite": "^6.3.0",
+    "vue": "^3.5.0",
+    "vue-tsc": "^2.2.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/almatov1/vue-figma-glass.git"
+  },
+  "homepage": "https://github.com/almatov1/vue-figma-glass#readme",
+  "bugs": {
+    "url": "https://github.com/almatov1/vue-figma-glass/issues"
+  }
+}
