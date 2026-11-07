@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, useId, watch } from 'vue'
+import type { GlassTune } from './glassMath'
 import {
   calculateRefractionProfile,
   generateDisplacementMap,
@@ -19,6 +20,8 @@ const props = withDefaults(
     lightAngle?: number
     lightIntensity?: number
     overLight?: boolean
+    /** Тонкая подгонка рамки: shadeStrength, glowStrength, glowWidthK, rimWidth и др. */
+    tune?: Partial<GlassTune>
   }>(),
   {
     refraction: 80,
@@ -64,6 +67,11 @@ const maxPx = computed(
 // feDisplacementMap: сдвиг = scale * (канал - 0.5) => scale = 2 * max
 const scale = computed(() => Math.max(0.01, maxPx.value * 2))
 
+// Яркость блика/тени: 80% (дефолт Figma) = 1
+const intensity = computed(() =>
+  props.overLight ? 0.8 : props.lightIntensity / 100,
+)
+
 function measure() {
   if (!element.value) return
   const rect = element.value.getBoundingClientRect()
@@ -79,28 +87,39 @@ function rebuild() {
   if (!w || !h) return
 
   const depth = effectiveDepth.value
-  const angle = (props.lightAngle * Math.PI) / 180
   const dpr = Math.min(2, window.devicePixelRatio || 1)
 
   // смещение — гладкая карта, хватает 1x
   const profile = calculateRefractionProfile(IOR)
-  dispUrl.value = generateDisplacementMap(w, h, radius.value, depth, profile)
+  dispUrl.value = generateDisplacementMap(
+    w,
+    h,
+    radius.value,
+    depth,
+    profile,
+    props.splay / 100,
+  )
 
   // кромка тонкая — рисуем в dpr для чёткости (feImage сам отмасштабирует)
+  const edge = {
+    angleRad: (props.lightAngle * Math.PI) / 180,
+    depth,
+    intensity: intensity.value / 0.8,
+    pxRatio: dpr,
+    tune: props.tune,
+  }
+
   specUrl.value = generateSpecularMap(
     Math.round(w * dpr),
     Math.round(h * dpr),
     radius.value * dpr,
-    depth * dpr,
-    angle,
-    dpr,
+    edge,
   )
   shadeUrl.value = generateShadeMap(
     Math.round(w * dpr),
     Math.round(h * dpr),
     radius.value * dpr,
-    angle,
-    dpr,
+    edge,
   )
 }
 
@@ -110,7 +129,17 @@ function scheduleRebuild() {
 }
 
 watch(
-  [width, height, radius, () => props.depth, () => props.lightAngle],
+  [
+    width,
+    height,
+    radius,
+    () => props.depth,
+    () => props.lightAngle,
+    () => props.lightIntensity,
+    () => props.overLight,
+    () => props.splay,
+    () => JSON.stringify(props.tune ?? {}),
+  ],
   scheduleRebuild,
 )
 
@@ -130,9 +159,6 @@ onUnmounted(() => {
 
 // Figma frost = blur radius, SVG stdDeviation ≈ radius / 2
 const blurStd = computed(() => (props.overLight ? 1 : props.frost) / 2)
-const intensity = computed(() =>
-  props.overLight ? 0.8 : props.lightIntensity / 100,
-)
 const dispersionK = computed(
   () => Math.min(1, Math.max(0, props.dispersion / 100)) * 0.12,
 )
@@ -176,23 +202,19 @@ const svgReady = computed(
 
           <feBlend in="r1" in2="g1" mode="screen" result="rg" />
           <feBlend in="rg" in2="b1" mode="screen" result="rgb" />
-          <!-- страховка: если где-то прозрачно — подставляем размытый фон -->
           <feBlend in="rgb" in2="blurred" mode="normal" result="displaced" />
         </template>
         <feDisplacementMap v-else in="blurred" in2="disp_map" :scale="scale" xChannelSelector="R" yChannelSelector="G"
           result="displaced" />
 
-        <!-- Лёгкая тень -->
+        <!-- Серое затемнение -->
         <feImage :href="shadeUrl" x="0" y="0" :width="width" :height="height" preserveAspectRatio="none"
           result="shade" />
         <feBlend in="shade" in2="displaced" mode="normal" result="with_shade" />
 
-        <!-- Блик -->
+        <!-- Белая кромка и полоса -->
         <feImage :href="specUrl" x="0" y="0" :width="width" :height="height" preserveAspectRatio="none" result="spec" />
-        <feComponentTransfer in="spec" result="spec_faded">
-          <feFuncA type="linear" :slope="intensity" />
-        </feComponentTransfer>
-        <feBlend in="spec_faded" in2="with_shade" mode="screen" />
+        <feBlend in="spec" in2="with_shade" mode="screen" />
       </filter>
     </defs>
   </svg>

@@ -56,7 +56,6 @@ function forEachEdgePixel(
 ) {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      // быстрый отсев: расстояние до рамки <= расстояния до скруглённого края
       const box = Math.min(x + 0.5, w - x - 0.5, y + 0.5, h - y - 0.5)
       if (box > band) continue
 
@@ -71,9 +70,8 @@ function forEachEdgePixel(
 }
 
 /**
- * Профиль рефракции по закону Снеллса.
+ * Профиль рефракции по закону Снеллиуса.
  * Возвращает НОРМИРОВАННОЕ смещение 0..1 (1 — на самом краю).
- * Реальная сила в пикселях задаётся снаружи.
  */
 export function calculateRefractionProfile(
   ior = 1.5,
@@ -89,8 +87,8 @@ export function calculateRefractionProfile(
     const x1 = Math.min(1, x + e)
     const slope = (surface(x1) - surface(x0)) / (x1 - x0)
 
-    const theta1 = Math.atan(slope) // угол падения
-    const theta2 = Math.asin(Math.sin(theta1) / ior) // угол преломления
+    const theta1 = Math.atan(slope)
+    const theta2 = Math.asin(Math.sin(theta1) / ior)
     const v = Math.tan(theta1 - theta2)
 
     profile[i] = v
@@ -101,17 +99,17 @@ export function calculateRefractionProfile(
   return profile
 }
 
-/**
- * Карта смещения. R/G = направление внутрь (нормаль * профиль).
- * Сэмплируем ВНУТРЬ, чтобы не читать за пределами элемента (нет артефактов у краёв).
- */
+/** Карта смещения. R/G = направление внутрь (нормаль * профиль). */
 export function generateDisplacementMap(
   w: number,
   h: number,
   radius: number,
   depth: number,
   profile: Float32Array,
+  splay = 0, // 0..1, приближение Figma Splay (см. комментарий ниже)
 ): string {
+  const k = clamp(splay, 0, 1)
+
   return canvasImage(w, h, (data) => {
     for (let i = 0; i < data.length; i += 4) {
       data[i] = 128
@@ -128,55 +126,85 @@ export function generateDisplacementMap(
       const i1 = Math.min(last, i0 + 1)
       const p = profile[i0] * (1 - (pos - i0)) + profile[i1] * (pos - i0)
 
-      data[idx] = Math.round(127.5 + 127.5 * -nx * p * aa)
-      data[idx + 1] = Math.round(127.5 + 127.5 * -ny * p * aa)
+      // Splay (приближение): направление сдвига смешивается с радиальным
+      // направлением от центра. При splay = 0 это обычная нормаль к краю.
+      let dx = nx
+      let dy = ny
+      if (k > 0) {
+        const pi = idx / 4
+        const cx = (pi % w) + 0.5 - w / 2
+        const cy = Math.floor(pi / w) + 0.5 - h / 2
+        const cl = Math.hypot(cx, cy) || 1
+        dx = nx * (1 - k) + (cx / cl) * k
+        dy = ny * (1 - k) + (cy / cl) * k
+        const dl = Math.hypot(dx, dy) || 1
+        dx /= dl
+        dy /= dl
+      }
+
+      data[idx] = Math.round(127.5 + 127.5 * -dx * p * aa)
+      data[idx + 1] = Math.round(127.5 + 127.5 * -dy * p * aa)
     })
   })
 }
 
 /**
- * 0: свет сверху-слева при -45° (блик на верх-лево и низ-право)
- * 2: зеркально (блик на верх-право и низ-лево)
- * Варианты 1 и 3 для specular даны только для тени.
+ * Направление НА источник света (экранные координаты, y вниз).
+ * При -45° => свет сверху-слева, как в Figma.
  */
-const LIGHT_VARIANT: 0 | 1 | 2 | 3 = 0
-
 function lightDir(angleRad: number) {
-  const c = Math.cos(angleRad)
-  const s = Math.sin(angleRad)
-  switch (LIGHT_VARIANT) {
-    case 0: return { x: -c, y: s }
-    case 1: return { x: c, y: -s }
-    case 2: return { x: c, y: s }
-    case 3: return { x: -c, y: -s }
-  }
+  return { x: -Math.cos(angleRad), y: Math.sin(angleRad) }
 }
 
-/** Тонкая яркая кромка + мягкое свечение; противоположная сторона слабее */
+/** Все числа для подгонки под Figma. Эталон: Light intensity 80%, Depth 20. */
+export const DEFAULT_GLASS_TUNE = {
+  rimWidth: 0.8,        // толщина тонкой белой линии, px
+  rimLit: 0.4,          // яркость линии на стороне света (минимум, растёт до 1)
+  rimDark: 0.15,        // яркость линии на противоположной стороне
+  glowWidthK: 0.7,      // ширина белой полосы = depth * K
+  glowStrength: 0.9,    // яркость белой полосы снизу-справа
+  shadeWidthK: 0.6,     // ширина серого затемнения = depth * K
+  shadeStrength: 0.08,  // сила серого затемнения сверху-слева
+  hairWidth: 0.9,       // толщина тонкой серой линии, px
+  hairStrength: 0.09,   // сила тонкой серой линии снизу-справа
+}
+
+export type GlassTune = typeof DEFAULT_GLASS_TUNE
+
+export interface EdgeLightOptions {
+  angleRad: number
+  depth: number      // в CSS px
+  intensity: number  // 1 = эталон (Figma 80%)
+  pxRatio?: number
+  tune?: Partial<GlassTune> // переопределение значений по умолчанию
+}
+
+/** Белая кромка + белая полоса на стороне, противоположной свету */
 export function generateSpecularMap(
   w: number,
   h: number,
   radius: number,
-  _depth: number,
-  angleRad: number,
-  pxRatio = 1,
+  { angleRad, depth, intensity, pxRatio = 1, tune }: EdgeLightOptions,
 ): string {
+  const T = { ...DEFAULT_GLASS_TUNE, ...tune }
   const L = lightDir(angleRad)
-  const rim = 0.8 * pxRatio // тонкая линия
-  const glowBand = 10 * pxRatio // белая полоса на противоположной стороне
-  const band = glowBand
+  const rim = T.rimWidth * pxRatio
+  const glowBand = Math.max(4, depth * T.glowWidthK) * pxRatio
+  const band = Math.max(glowBand, rim * 4)
 
   return canvasImage(w, h, (data) => {
     forEachEdgePixel(w, h, radius, band, (idx, d, nx, ny, aa) => {
       const a = nx * L.x + ny * L.y // >0 сторона света, <0 противоположная
 
-      // тонкая белая линия: ярко на стороне света, слабее на остальных
-      const line = Math.exp(-Math.pow(d / rim, 2)) * (a > 0 ? 0.4 + 0.6 * a : 0.15)
+      const side = a > 0 ? T.rimLit + (1 - T.rimLit) * a : T.rimDark
+      const line = Math.exp(-Math.pow(d / rim, 2)) * side
 
-      // мягкая белая полоса на стороне, противоположной свету
-      const glow = Math.pow(Math.max(0, 1 - d / glowBand), 2) * Math.max(0, -a) * 0.9
+      const glow =
+        Math.pow(Math.max(0, 1 - d / glowBand), 2) *
+        Math.max(0, -a) *
+        T.glowStrength
 
-      const brightness = line + glow
+      const brightness = (line + glow) * intensity
 
       data[idx] = 255
       data[idx + 1] = 255
@@ -186,29 +214,34 @@ export function generateSpecularMap(
   })
 }
 
+/** Серое затемнение внутрь на стороне света + тонкая серая линия напротив */
 export function generateShadeMap(
   w: number,
   h: number,
   radius: number,
-  _depth: number,
-  angleRad: number,
-  pxRatio = 1,
+  { angleRad, depth, intensity, pxRatio = 1, tune }: EdgeLightOptions,
 ): string {
+  const T = { ...DEFAULT_GLASS_TUNE, ...tune }
   const L = lightDir(angleRad)
-  const band = 12 * pxRatio
-  const hair = 0.9 * pxRatio
+  const shadeBand = Math.max(4, depth * T.shadeWidthK) * pxRatio
+  const hair = T.hairWidth * pxRatio
+  const band = Math.max(shadeBand, hair * 4)
 
   return canvasImage(w, h, (data) => {
     forEachEdgePixel(w, h, radius, band, (idx, d, nx, ny, aa) => {
       const a = nx * L.x + ny * L.y
 
-      // серое затемнение внутрь на стороне света
-      const inner = Math.pow(1 - d / band, 2) * Math.max(0, a) * 0.07
+      const inner =
+        Math.pow(Math.max(0, 1 - d / shadeBand), 2) *
+        Math.max(0, a) *
+        T.shadeStrength
 
-      // тонкая серая линия по краю на противоположной стороне
-      const outer = Math.exp(-Math.pow(d / hair, 2)) * Math.max(0, -a) * 0.09
+      const outer =
+        Math.exp(-Math.pow(d / hair, 2)) *
+        Math.max(0, -a) *
+        T.hairStrength
 
-      const alpha = inner + outer
+      const alpha = (inner + outer) * intensity
 
       data[idx] = 0
       data[idx + 1] = 0
