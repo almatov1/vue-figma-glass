@@ -14,10 +14,13 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/vue-figma-glass.js",
       "require": "./dist/vue-figma-glass.umd.cjs"
-    }
+    },
+    "./style.css": "./dist/vue-figma-glass.css"
   },
+  "style": "./dist/vue-figma-glass.css",
   "scripts": {
-    "build": "vite build && vue-tsc --declaration --emitDeclarationOnly --outDir dist"
+    "build": "vite build && vue-tsc --declaration --emitDeclarationOnly --outDir dist",
+    "prepack": "npm run build"
   },
   "peerDependencies": {
     "vue": "^3.4.0"
@@ -29,6 +32,17 @@
     "vue": "^3.5.0",
     "vue-tsc": "^2.2.0"
   },
+  "keywords": [
+    "vue",
+    "vue3",
+    "nuxt",
+    "figma",
+    "glass",
+    "glassmorphism",
+    "liquid-glass",
+    "svg-filter",
+    "ui-components"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
