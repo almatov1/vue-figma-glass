@@ -156,17 +156,31 @@ function lightDir(angleRad: number) {
   return { x: -Math.cos(angleRad), y: Math.sin(angleRad) }
 }
 
-/** Все числа для подгонки под Figma. Эталон: Light intensity 80%, Depth 20. */
+/**
+ * Default edge-lighting calibration for Figma-like Glass.
+ *
+ * Reference configuration:
+ * - Light angle: -45°
+ * - Light intensity: 80%
+ * - Refraction: 80
+ * - Depth: 20
+ * - Dispersion: 50
+ * - Frost: 4
+ * - Splay: 0
+ *
+ * These are visual approximations, not Figma's internal formulas.
+ * Override individual values using the `tune` prop.
+ */
 export const DEFAULT_GLASS_TUNE = {
-  rimWidth: 0.8,        // толщина тонкой белой линии, px
-  rimLit: 0.4,          // яркость линии на стороне света (минимум, растёт до 1)
-  rimDark: 0.15,        // яркость линии на противоположной стороне
-  glowWidthK: 0.7,      // ширина белой полосы = depth * K
-  glowStrength: 0.9,    // яркость белой полосы снизу-справа
-  shadeWidthK: 0.6,     // ширина серого затемнения = depth * K
-  shadeStrength: 0.08,  // сила серого затемнения сверху-слева
-  hairWidth: 0.9,       // толщина тонкой серой линии, px
-  hairStrength: 0.09,   // сила тонкой серой линии снизу-справа
+  rimWidth: 0.67,
+  rimLit: 0.9,
+  rimDark: 0.22,
+  glowWidthK: 0.85,
+  glowStrength: 0.85,
+  shadeWidthK: 0.95,
+  shadeStrength: 0.046,
+  hairWidth: 0.9,
+  hairStrength: 0,
 }
 
 export type GlassTune = typeof DEFAULT_GLASS_TUNE
