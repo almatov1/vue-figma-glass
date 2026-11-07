@@ -1,8 +1,6 @@
-# Vue Figma Glass (adaptation prototype)
+# Vue Figma Glass
 
 Vue 3 / Nuxt-compatible port of the SVG inner-shadow variant of Holybasil/figma-glass-effect.
-
-**IMPORTANT: upstream repository archive contains no LICENSE file. Do not publish this derivative to GitHub or npm until you obtain an explicit redistribution license/permission from Holybasil.**
 
 ## Local usage
 
