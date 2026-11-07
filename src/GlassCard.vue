@@ -99,8 +99,8 @@ function rebuild() {
     Math.round(w * dpr),
     Math.round(h * dpr),
     radius.value * dpr,
-    depth * dpr,
     angle,
+    dpr,
   )
 }
 

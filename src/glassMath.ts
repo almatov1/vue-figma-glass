@@ -135,11 +135,21 @@ export function generateDisplacementMap(
 }
 
 /**
- * Направление НА источник света в экранных координатах (y вниз).
- * -45° => свет сверху-слева (как в Figma). Если у тебя зеркально — поменяй знаки.
+ * 0: свет сверху-слева при -45° (блик на верх-лево и низ-право)
+ * 2: зеркально (блик на верх-право и низ-лево)
+ * Варианты 1 и 3 для specular даны только для тени.
  */
+const LIGHT_VARIANT: 0 | 1 | 2 | 3 = 0
+
 function lightDir(angleRad: number) {
-  return { x: -Math.cos(angleRad), y: Math.sin(angleRad) }
+  const c = Math.cos(angleRad)
+  const s = Math.sin(angleRad)
+  switch (LIGHT_VARIANT) {
+    case 0: return { x: -c, y: s }
+    case 1: return { x: c, y: -s }
+    case 2: return { x: c, y: s }
+    case 3: return { x: -c, y: -s }
+  }
 }
 
 /** Тонкая яркая кромка + мягкое свечение; противоположная сторона слабее */
@@ -147,23 +157,26 @@ export function generateSpecularMap(
   w: number,
   h: number,
   radius: number,
-  depth: number,
+  _depth: number,
   angleRad: number,
   pxRatio = 1,
 ): string {
   const L = lightDir(angleRad)
-  const rim = 1.1 * pxRatio
-  const glow = Math.max(2, depth * 0.5)
-  const band = Math.max(rim * 4, glow * 3)
+  const rim = 0.9 * pxRatio
+  const glow = 3 * pxRatio
+  const band = glow * 4
 
   return canvasImage(w, h, (data) => {
     forEachEdgePixel(w, h, radius, band, (idx, d, nx, ny, aa) => {
-      const a = nx * L.x + ny * L.y
-      const lit = a > 0 ? 0.25 + 0.75 * a : 0.25 + 0.3 * -a
+      // симметрично: яркие обе стороны вдоль оси света
+      const a = Math.abs(nx * L.x + ny * L.y)
 
-      const narrow = Math.exp(-Math.pow(d / rim, 2))
-      const broad = Math.exp(-d / glow)
-      const brightness = (0.85 * narrow + 0.22 * broad) * lit
+      // тонкая линия по всему контуру, ярче вдоль оси света
+      const narrow = Math.exp(-Math.pow(d / rim, 2)) * (0.3 + 0.7 * a)
+      // лёгкое свечение только у яркой оси
+      const broad = Math.exp(-d / glow) * 0.12 * a
+
+      const brightness = narrow + broad
 
       data[idx] = 255
       data[idx + 1] = 255
@@ -178,17 +191,17 @@ export function generateShadeMap(
   w: number,
   h: number,
   radius: number,
-  depth: number,
   angleRad: number,
+  pxRatio = 1,
 ): string {
   const L = lightDir(angleRad)
-  const band = Math.max(4, depth * 1.2)
+  const band = 6 * pxRatio
 
   return canvasImage(w, h, (data) => {
     forEachEdgePixel(w, h, radius, band, (idx, d, nx, ny, aa) => {
       const a = nx * L.x + ny * L.y
-      const fade = Math.pow(1 - d / band, 2)
-      const alpha = Math.max(0, -a) * fade * 0.1
+      const fade = Math.pow(1 - d / band, 3)
+      const alpha = Math.max(0, -a) * fade * 0.04
 
       data[idx] = 0
       data[idx + 1] = 0
