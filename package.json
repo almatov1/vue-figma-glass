@@ -1,6 +1,6 @@
 {
   "name": "vue-figma-glass",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Vue 3 glass card adapted from Holybasil figma-glass-effect",
   "files": [
