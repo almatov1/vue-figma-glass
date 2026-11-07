@@ -162,21 +162,21 @@ export function generateSpecularMap(
   pxRatio = 1,
 ): string {
   const L = lightDir(angleRad)
-  const rim = 0.9 * pxRatio
-  const glow = 3 * pxRatio
-  const band = glow * 4
+  const rim = 0.8 * pxRatio // тонкая линия
+  const glowBand = 10 * pxRatio // белая полоса на противоположной стороне
+  const band = glowBand
 
   return canvasImage(w, h, (data) => {
     forEachEdgePixel(w, h, radius, band, (idx, d, nx, ny, aa) => {
-      // симметрично: яркие обе стороны вдоль оси света
-      const a = Math.abs(nx * L.x + ny * L.y)
+      const a = nx * L.x + ny * L.y // >0 сторона света, <0 противоположная
 
-      // тонкая линия по всему контуру, ярче вдоль оси света
-      const narrow = Math.exp(-Math.pow(d / rim, 2)) * (0.3 + 0.7 * a)
-      // лёгкое свечение только у яркой оси
-      const broad = Math.exp(-d / glow) * 0.12 * a
+      // тонкая белая линия: ярко на стороне света, слабее на остальных
+      const line = Math.exp(-Math.pow(d / rim, 2)) * (a > 0 ? 0.4 + 0.6 * a : 0.15)
 
-      const brightness = narrow + broad
+      // мягкая белая полоса на стороне, противоположной свету
+      const glow = Math.pow(Math.max(0, 1 - d / glowBand), 2) * Math.max(0, -a) * 0.9
+
+      const brightness = line + glow
 
       data[idx] = 255
       data[idx + 1] = 255
@@ -186,27 +186,34 @@ export function generateSpecularMap(
   })
 }
 
-/** Очень лёгкая тень на стороне, отвёрнутой от света */
 export function generateShadeMap(
   w: number,
   h: number,
   radius: number,
+  _depth: number,
   angleRad: number,
   pxRatio = 1,
 ): string {
   const L = lightDir(angleRad)
-  const band = 6 * pxRatio
+  const band = 12 * pxRatio
+  const hair = 0.9 * pxRatio
 
   return canvasImage(w, h, (data) => {
     forEachEdgePixel(w, h, radius, band, (idx, d, nx, ny, aa) => {
       const a = nx * L.x + ny * L.y
-      const fade = Math.pow(1 - d / band, 3)
-      const alpha = Math.max(0, -a) * fade * 0.04
+
+      // серое затемнение внутрь на стороне света
+      const inner = Math.pow(1 - d / band, 2) * Math.max(0, a) * 0.07
+
+      // тонкая серая линия по краю на противоположной стороне
+      const outer = Math.exp(-Math.pow(d / hair, 2)) * Math.max(0, -a) * 0.09
+
+      const alpha = inner + outer
 
       data[idx] = 0
       data[idx + 1] = 0
       data[idx + 2] = 0
-      data[idx + 3] = Math.round(255 * alpha * aa)
+      data[idx + 3] = Math.round(255 * clamp(alpha, 0, 1) * aa)
     })
   })
 }
