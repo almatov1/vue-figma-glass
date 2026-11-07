@@ -1,9 +1,8 @@
-
-const SURFACE_FN = (x: number) =>
-  Math.pow(1 - Math.pow(1 - x, 4), 0.25)
-
 const clamp = (v: number, min: number, max: number) =>
   Math.min(max, Math.max(min, v))
+
+/** Выпуклая "squircle" поверхность. x: 0 = край, 1 = плоский центр */
+const surface = (x: number) => Math.pow(1 - Math.pow(1 - x, 4), 0.25)
 
 function canvasImage(
   w: number,
@@ -11,25 +10,15 @@ function canvasImage(
   draw: (data: Uint8ClampedArray) => void,
 ): string {
   if (typeof document === 'undefined') return ''
-
   const canvas = document.createElement('canvas')
   canvas.width = w
   canvas.height = h
-
   const ctx = canvas.getContext('2d')
   if (!ctx) return ''
-
   const image = ctx.createImageData(w, h)
   draw(image.data)
   ctx.putImageData(image, 0, 0)
-
   return canvas.toDataURL('image/png')
-}
-
-type SDFResult = {
-  dist: number
-  nx: number
-  ny: number
 }
 
 function roundedRectSDF(
@@ -38,345 +27,173 @@ function roundedRectSDF(
   w: number,
   h: number,
   radius: number,
-): SDFResult {
+) {
   const r = clamp(radius, 0, Math.min(w, h) / 2)
   const x = px - w / 2
   const y = py - h / 2
-
-  const bx = w / 2 - r
-  const by = h / 2 - r
-
-  const dx = Math.abs(x) - bx
-  const dy = Math.abs(y) - by
-
-  if (dx <= 0 && dy <= 0) {
-    if (dx > dy) {
-      return {
-        dist: dx - r,
-        nx: x >= 0 ? 1 : -1,
-        ny: 0,
-      }
-    }
-
-    return {
-      dist: dy - r,
-      nx: 0,
-      ny: y >= 0 ? 1 : -1,
-    }
-  }
+  const dx = Math.abs(x) - (w / 2 - r)
+  const dy = Math.abs(y) - (h / 2 - r)
 
   if (dx > 0 && dy > 0) {
     const len = Math.hypot(dx, dy) || 1
-
     return {
       dist: len - r,
       nx: (dx / len) * Math.sign(x),
       ny: (dy / len) * Math.sign(y),
     }
   }
+  if (dx > dy) return { dist: dx - r, nx: x >= 0 ? 1 : -1, ny: 0 }
+  return { dist: dy - r, nx: 0, ny: y >= 0 ? 1 : -1 }
+}
 
-  if (dx > dy) {
-    return {
-      dist: dx - r,
-      nx: x >= 0 ? 1 : -1,
-      ny: 0,
+/** Обход только пикселей в полосе `band` от края */
+function forEachEdgePixel(
+  w: number,
+  h: number,
+  radius: number,
+  band: number,
+  cb: (index: number, fromEdge: number, nx: number, ny: number, aa: number) => void,
+) {
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      // быстрый отсев: расстояние до рамки <= расстояния до скруглённого края
+      const box = Math.min(x + 0.5, w - x - 0.5, y + 0.5, h - y - 0.5)
+      if (box > band) continue
+
+      const { dist, nx, ny } = roundedRectSDF(x + 0.5, y + 0.5, w, h, radius)
+      if (dist > 0.5) continue
+      const fromEdge = Math.max(0, -dist)
+      if (fromEdge >= band) continue
+
+      cb((y * w + x) * 4, fromEdge, nx, ny, clamp(0.5 - dist, 0, 1))
     }
-  }
-
-  return {
-    dist: dy - r,
-    nx: 0,
-    ny: y >= 0 ? 1 : -1,
   }
 }
 
+/**
+ * Профиль рефракции по закону Снеллса.
+ * Возвращает НОРМИРОВАННОЕ смещение 0..1 (1 — на самом краю).
+ * Реальная сила в пикселях задаётся снаружи.
+ */
 export function calculateRefractionProfile(
-  glassThickness: number,
-  depth: number,
-  ior: number,
+  ior = 1.5,
   samples = 128,
-): Float64Array {
-  const eta = 1 / ior
-  const profile = new Float64Array(samples)
+): Float32Array {
+  const profile = new Float32Array(samples)
+  let max = 0
 
   for (let i = 0; i < samples; i++) {
-    const x = clamp(i / samples, 0, 0.9999)
-    const y = SURFACE_FN(x)
+    const x = i / (samples - 1)
+    const e = 1e-3
+    const x0 = Math.max(0, x - e)
+    const x1 = Math.min(1, x + e)
+    const slope = (surface(x1) - surface(x0)) / (x1 - x0)
 
-    const dx = 0.0001
-    const y2 = SURFACE_FN(Math.min(0.99999, x + dx))
-    const deriv = (y2 - y) / dx
+    const theta1 = Math.atan(slope) // угол падения
+    const theta2 = Math.asin(Math.sin(theta1) / ior) // угол преломления
+    const v = Math.tan(theta1 - theta2)
 
-    const mag = Math.hypot(deriv, 1)
-    const nx = -deriv / mag
-    const ny = -1 / mag
-
-    const dot = ny
-    const k = 1 - eta * eta * (1 - dot * dot)
-
-    if (k <= 0) continue
-
-    const sq = Math.sqrt(k)
-    const factor = eta * dot + sq
-
-    const rx = -factor * nx
-    const ry = eta - factor * ny
-
-    if (Math.abs(ry) < 0.00001) continue
-
-    const displacement =
-      rx * ((y * depth + glassThickness) / ry)
-
-    profile[i] = Number.isFinite(displacement)
-      ? displacement
-      : 0
+    profile[i] = v
+    max = Math.max(max, v)
   }
 
+  for (let i = 0; i < samples; i++) profile[i] /= max || 1
   return profile
 }
 
-export function refractionToParams(refraction: number): {
-  ior: number
-  glassThickness: number
-} {
-  const t = clamp(refraction / 100, 0, 1)
-
-  return {
-    ior: 1 + t * 4,
-    glassThickness: 10 + t * 190,
-  }
-}
-
+/**
+ * Карта смещения. R/G = направление внутрь (нормаль * профиль).
+ * Сэмплируем ВНУТРЬ, чтобы не читать за пределами элемента (нет артефактов у краёв).
+ */
 export function generateDisplacementMap(
   w: number,
   h: number,
   radius: number,
   depth: number,
-  profile: Float64Array,
-  maxDisp: number,
+  profile: Float32Array,
 ): string {
   return canvasImage(w, h, (data) => {
-    const samples = profile.length
-    const safeScale = Math.max(0.001, maxDisp)
-
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const index = (y * w + x) * 4
-        const { dist, nx, ny } = roundedRectSDF(
-          x + 0.5,
-          y + 0.5,
-          w,
-          h,
-          radius,
-        )
-
-        // Neutral displacement outside the glass edge.
-        data[index] = 128
-        data[index + 1] = 128
-        data[index + 2] = 0
-        data[index + 3] = 255
-
-        if (dist > 0.5) continue
-
-        const fromEdge = Math.max(0, -dist)
-        if (fromEdge >= depth) continue
-
-        const t = clamp(fromEdge / depth, 0, 1)
-        const position = t * (samples - 1)
-        const i0 = Math.floor(position)
-        const i1 = Math.min(samples - 1, i0 + 1)
-        const mix = position - i0
-
-        const disp =
-          profile[i0] * (1 - mix) +
-          profile[i1] * mix
-
-        const edgeAlpha = clamp(0.5 - dist, 0, 1)
-
-        const dx = clamp(
-          (-nx * disp) / safeScale,
-          -1,
-          1,
-        )
-
-        const dy = clamp(
-          (-ny * disp) / safeScale,
-          -1,
-          1,
-        )
-
-        data[index] = Math.round(
-          clamp(128 + dx * 127 * edgeAlpha, 0, 255),
-        )
-
-        data[index + 1] = Math.round(
-          clamp(128 + dy * 127 * edgeAlpha, 0, 255),
-        )
-      }
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 128
+      data[i + 1] = 128
+      data[i + 2] = 128
+      data[i + 3] = 255
     }
+
+    const last = profile.length - 1
+
+    forEachEdgePixel(w, h, radius, depth, (idx, fromEdge, nx, ny, aa) => {
+      const pos = (fromEdge / depth) * last
+      const i0 = Math.floor(pos)
+      const i1 = Math.min(last, i0 + 1)
+      const p = profile[i0] * (1 - (pos - i0)) + profile[i1] * (pos - i0)
+
+      data[idx] = Math.round(127.5 + 127.5 * -nx * p * aa)
+      data[idx + 1] = Math.round(127.5 + 127.5 * -ny * p * aa)
+    })
   })
 }
 
+/**
+ * Направление НА источник света в экранных координатах (y вниз).
+ * -45° => свет сверху-слева (как в Figma). Если у тебя зеркально — поменяй знаки.
+ */
+function lightDir(angleRad: number) {
+  return { x: -Math.cos(angleRad), y: Math.sin(angleRad) }
+}
+
+/** Тонкая яркая кромка + мягкое свечение; противоположная сторона слабее */
 export function generateSpecularMap(
   w: number,
   h: number,
   radius: number,
   depth: number,
-  angle = -Math.PI / 4,
+  angleRad: number,
+  pxRatio = 1,
 ): string {
+  const L = lightDir(angleRad)
+  const rim = 1.1 * pxRatio
+  const glow = Math.max(2, depth * 0.5)
+  const band = Math.max(rim * 4, glow * 3)
+
   return canvasImage(w, h, (data) => {
-    const lightX = Math.cos(angle)
-    const lightY = -Math.sin(angle)
-    const band = Math.max(1, depth)
+    forEachEdgePixel(w, h, radius, band, (idx, d, nx, ny, aa) => {
+      const a = nx * L.x + ny * L.y
+      const lit = a > 0 ? 0.25 + 0.75 * a : 0.25 + 0.3 * -a
 
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const { dist, nx, ny } = roundedRectSDF(
-          x + 0.5,
-          y + 0.5,
-          w,
-          h,
-          radius,
-        )
+      const narrow = Math.exp(-Math.pow(d / rim, 2))
+      const broad = Math.exp(-d / glow)
+      const brightness = (0.85 * narrow + 0.22 * broad) * lit
 
-        if (dist > 0.5) continue
-
-        const fromEdge = Math.max(0, -dist)
-        if (fromEdge >= band) continue
-
-        const t = fromEdge / band
-
-        // Bright, narrow rim + broad soft glass highlight.
-        const narrow = Math.exp(
-          -Math.pow(fromEdge / 1.8, 2),
-        )
-
-        const broad = Math.pow(1 - t, 3)
-
-        const alignment = nx * lightX + ny * lightY
-
-        // Stronger on illuminated sides, still visible elsewhere.
-        const lighting =
-          0.28 + 0.72 * Math.max(0, alignment)
-
-        const brightness =
-          (0.72 * narrow + 0.28 * broad) *
-          lighting
-
-        const alpha = Math.round(
-          255 *
-          clamp(brightness, 0, 1) *
-          clamp(0.5 - dist, 0, 1),
-        )
-
-        const index = (y * w + x) * 4
-
-        data[index] = 255
-        data[index + 1] = 255
-        data[index + 2] = 255
-        data[index + 3] = alpha
-      }
-    }
+      data[idx] = 255
+      data[idx + 1] = 255
+      data[idx + 2] = 255
+      data[idx + 3] = Math.round(255 * clamp(brightness, 0, 1) * aa)
+    })
   })
 }
 
-export function generateInnerLightMap(
+/** Очень лёгкая тень на стороне, отвёрнутой от света */
+export function generateShadeMap(
   w: number,
   h: number,
   radius: number,
-  angle = -Math.PI / 4,
-): {
-  shadowUrl: string
-  highlightUrl: string
-} {
-  const shadowUrl = canvasImage(w, h, (data) => {
-    const lightX = Math.cos(angle)
-    const lightY = -Math.sin(angle)
-    const band = 22
+  depth: number,
+  angleRad: number,
+): string {
+  const L = lightDir(angleRad)
+  const band = Math.max(4, depth * 1.2)
 
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const { dist, nx, ny } = roundedRectSDF(
-          x + 0.5,
-          y + 0.5,
-          w,
-          h,
-          radius,
-        )
+  return canvasImage(w, h, (data) => {
+    forEachEdgePixel(w, h, radius, band, (idx, d, nx, ny, aa) => {
+      const a = nx * L.x + ny * L.y
+      const fade = Math.pow(1 - d / band, 2)
+      const alpha = Math.max(0, -a) * fade * 0.1
 
-        if (dist > 0) continue
-
-        const fromEdge = -dist
-        if (fromEdge >= band) continue
-
-        const dot = nx * lightX + ny * lightY
-        const fade = Math.pow(
-          1 - fromEdge / band,
-          2,
-        )
-
-        const alpha = Math.round(
-          255 *
-          Math.max(0, -dot) *
-          fade *
-          0.32,
-        )
-
-        const index = (y * w + x) * 4
-
-        data[index] = 0
-        data[index + 1] = 0
-        data[index + 2] = 0
-        data[index + 3] = alpha
-      }
-    }
+      data[idx] = 0
+      data[idx + 1] = 0
+      data[idx + 2] = 0
+      data[idx + 3] = Math.round(255 * alpha * aa)
+    })
   })
-
-  const highlightUrl = canvasImage(w, h, (data) => {
-    const lightX = Math.cos(angle)
-    const lightY = -Math.sin(angle)
-    const band = 22
-
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const { dist, nx, ny } = roundedRectSDF(
-          x + 0.5,
-          y + 0.5,
-          w,
-          h,
-          radius,
-        )
-
-        if (dist > 0) continue
-
-        const fromEdge = -dist
-        if (fromEdge >= band) continue
-
-        const dot = nx * lightX + ny * lightY
-        const fade = Math.pow(
-          1 - fromEdge / band,
-          2,
-        )
-
-        const alpha = Math.round(
-          255 *
-          Math.max(0, dot) *
-          fade *
-          0.65,
-        )
-
-        const index = (y * w + x) * 4
-
-        data[index] = 255
-        data[index + 1] = 255
-        data[index + 2] = 255
-        data[index + 3] = alpha
-      }
-    }
-  })
-
-  return {
-    shadowUrl,
-    highlightUrl,
-  }
 }
