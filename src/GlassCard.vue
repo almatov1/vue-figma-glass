@@ -4,6 +4,7 @@ import {
   onMounted,
   onUnmounted,
   ref,
+  useId,
   watch,
 } from 'vue'
 
@@ -43,8 +44,7 @@ const props = withDefaults(
 )
 
 const element = ref<HTMLElement | null>(null)
-
-const filterId = `glass-${Math.random().toString(36).slice(2)}`
+const filterId = `glass-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
 
 const width = ref(0)
 const height = ref(0)
@@ -65,13 +65,17 @@ function measure() {
   const rect = element.value.getBoundingClientRect()
   const style = getComputedStyle(element.value)
 
-  width.value = Math.max(1, Math.round(rect.width))
-  height.value = Math.max(1, Math.round(rect.height))
+  const nextWidth = Math.max(1, Math.round(rect.width))
+  const nextHeight = Math.max(1, Math.round(rect.height))
 
-  radius.value = Math.max(
+  const nextRadius = Math.max(
     0,
     parseFloat(style.borderTopLeftRadius) || 0,
   )
+
+  width.value = nextWidth
+  height.value = nextHeight
+  radius.value = nextRadius
 }
 
 function rebuild() {
@@ -86,9 +90,9 @@ function rebuild() {
   const w = width.value
   const h = height.value
 
-  const depth = Math.max(
-    0.1,
-    Math.min(props.depth, Math.min(w, h) / 2 - 1),
+  const depth = Math.min(
+    Math.max(0.1, props.depth),
+    Math.max(0.1, Math.min(w, h) / 2 - 1),
   )
 
   const { ior, glassThickness } = refractionToParams(
@@ -103,7 +107,7 @@ function rebuild() {
 
   const maxDisp = Math.max(
     1,
-    ...Array.from(profile, Math.abs),
+    ...Array.from(profile, (v) => Math.abs(v)),
   )
 
   scale.value = maxDisp
@@ -182,12 +186,26 @@ const intensity = computed(() =>
   props.overLight ? 0.8 : props.lightIntensity / 100,
 )
 
+const dispersionAmount = computed(() =>
+  Math.min(1, Math.max(0, props.dispersion / 100)),
+)
+
 const redScale = computed(
-  () => scale.value * (1 + (props.dispersion / 100) * 0.15),
+  () => scale.value * (1 + dispersionAmount.value * 0.08),
 )
 
 const blueScale = computed(
-  () => scale.value * (1 - (props.dispersion / 100) * 0.15),
+  () => scale.value * (1 - dispersionAmount.value * 0.08),
+)
+
+const svgReady = computed(
+  () =>
+    width.value > 0 &&
+    height.value > 0 &&
+    !!dispUrl.value &&
+    !!specUrl.value &&
+    !!shadowUrl.value &&
+    !!highlightUrl.value,
 )
 </script>
 
@@ -198,10 +216,11 @@ const blueScale = computed(
     <slot />
   </div>
 
-  <svg v-if="width && height && dispUrl" xmlns="http://www.w3.org/2000/svg" width="0" height="0"
-    class="vue-figma-glass-defs" color-interpolation-filters="sRGB" aria-hidden="true">
+  <svg v-if="svgReady" xmlns="http://www.w3.org/2000/svg" width="0" height="0" class="vue-figma-glass-defs"
+    color-interpolation-filters="sRGB" aria-hidden="true">
     <defs>
-      <filter :id="filterId" x="0%" y="0%" width="100%" height="100%">
+      <filter :id="filterId" filterUnits="userSpaceOnUse" primitiveUnits="userSpaceOnUse" :x="0" :y="0" :width="width"
+        :height="height">
         <feGaussianBlur in="SourceGraphic" :stdDeviation="frostValue" result="blurred_source" />
 
         <feImage :href="dispUrl" x="0" y="0" :width="width" :height="height" result="disp_map" />
@@ -225,32 +244,28 @@ const blueScale = computed(
           <feDisplacementMap in="src_b" in2="disp_map" :scale="blueScale" xChannelSelector="R" yChannelSelector="G"
             result="disp_b" />
 
-          <feBlend in="disp_r" in2="disp_g" mode="screen" result="disp_rg" />
+          <feComposite in="disp_r" in2="disp_g" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="disp_rg" />
 
-          <feBlend in="disp_rg" in2="disp_b" mode="screen" result="displaced" />
+          <feComposite in="disp_rg" in2="disp_b" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="displaced" />
         </template>
 
         <feDisplacementMap v-else in="blurred_source" in2="disp_map" :scale="scale" xChannelSelector="R"
           yChannelSelector="G" result="displaced" />
 
-        <feColorMatrix in="displaced" type="saturate" values="4" result="displaced_sat" />
+        <feColorMatrix in="displaced" type="saturate" values="2" result="displaced_sat" />
 
         <feImage :href="specUrl" x="0" y="0" :width="width" :height="height" result="spec_layer" />
-
-        <feComposite in="displaced_sat" in2="spec_layer" operator="in" result="spec_masked" />
 
         <feComponentTransfer in="spec_layer" result="spec_faded">
           <feFuncA type="linear" :slope="intensity" />
         </feComponentTransfer>
 
-        <feBlend in="spec_masked" in2="displaced" mode="normal" result="with_sat" />
-
-        <feBlend in="spec_faded" in2="with_sat" mode="screen" result="glass_base" />
+        <feBlend in="spec_faded" in2="displaced_sat" mode="screen" result="glass_base" />
 
         <feImage :href="shadowUrl" x="0" y="0" :width="width" :height="height" result="inner_shadow" />
 
         <feComponentTransfer in="inner_shadow" result="inner_shadow_faded">
-          <feFuncA type="linear" :slope="overLight ? 0.4 : 0.3" />
+          <feFuncA type="linear" :slope="overLight ? 0.8 : 0.65" />
         </feComponentTransfer>
 
         <feBlend in="inner_shadow_faded" in2="glass_base" mode="normal" result="with_shadow" />
@@ -258,7 +273,7 @@ const blueScale = computed(
         <feImage :href="highlightUrl" x="0" y="0" :width="width" :height="height" result="inner_highlight" />
 
         <feComponentTransfer in="inner_highlight" result="inner_highlight_faded">
-          <feFuncA type="linear" :slope="overLight ? 0.35 : 0.25" />
+          <feFuncA type="linear" :slope="overLight ? 0.8 : 0.7" />
         </feComponentTransfer>
 
         <feBlend in="inner_highlight_faded" in2="with_shadow" mode="screen" />
@@ -274,25 +289,24 @@ const blueScale = computed(
   overflow: hidden;
 }
 
-.vue-figma-glass::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  background: rgba(255, 255, 255, 0.06);
-  pointer-events: none;
-}
-
+.vue-figma-glass::before,
 .vue-figma-glass::after {
   content: '';
   position: absolute;
   inset: 0;
-  z-index: -2;
   border-radius: inherit;
+  pointer-events: none;
+}
+
+.vue-figma-glass::before {
+  z-index: -1;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.vue-figma-glass::after {
+  z-index: -2;
   backdrop-filter: var(--glass-filter);
   -webkit-backdrop-filter: var(--glass-filter);
-  pointer-events: none;
 }
 
 .vue-figma-glass-defs {
