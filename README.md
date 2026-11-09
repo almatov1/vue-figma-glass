@@ -2,7 +2,13 @@
 
 A Vue 3 / Nuxt glass-card component inspired by Figma's Glass effect. Uses SVG backdrop filters and generated Canvas maps for edge lighting and refraction. This is a visual approximation, not Figma's rendering engine.
 
-> **Licensing:** The originally supplied project archive identifies an adaptation of Holybasil/figma-glass-effect and states that upstream redistribution permission has not been established. Verify the provenance and redistribution rights of the actual published implementation before distributing it.
+## License
+
+MIT License.
+
+Based on [Holybasil/figma-glass-effect](https://github.com/Holybasil/figma-glass-effect), adapted for Vue 3 / Nuxt.
+
+Original copyright and license notices are preserved.
 
 ## Installation
 
@@ -12,11 +18,26 @@ npm install vue-figma-glass
 
 Vue 3 is a peer dependency.
 
+**Important:** The component requires its stylesheet. Import it once in your application:
+
+```ts
+import 'vue-figma-glass/style.css'
+```
+
+For Nuxt 3, you can alternatively register the stylesheet globally in `nuxt.config.ts`:
+
+```ts
+export default defineNuxtConfig({
+  css: ['vue-figma-glass/style.css']
+})
+```
+
 ## Usage in Vue 3 / Nuxt
 
 ```vue
 <script setup lang="ts">
 import { GlassCard } from 'vue-figma-glass'
+import 'vue-figma-glass/style.css'
 </script>
 
 <template>
@@ -39,6 +60,8 @@ import { GlassCard } from 'vue-figma-glass'
 ```
 
 The example uses a **-45° light angle** and **80% light intensity**, matching the calibrated reference settings.
+
+**Note:** If you already registered the stylesheet globally in `nuxt.config.ts`, you do not need to import it again inside the component.
 
 ## Glass properties
 
