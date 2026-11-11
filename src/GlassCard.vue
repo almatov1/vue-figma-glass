@@ -40,6 +40,12 @@ const STRENGTH = 1.5
 const IOR = 1.5
 
 const element = ref<HTMLElement | null>(null)
+
+const isVisible = ref(false)
+const hasInitialized = ref(false)
+
+let visibilityObserver: IntersectionObserver | undefined
+
 const filterId = `glass-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
 
 const width = ref(0)
@@ -51,7 +57,12 @@ const specUrl = ref('')
 const shadeUrl = ref('')
 
 let observer: ResizeObserver | undefined
-let raf = 0
+
+let displacementRaf = 0
+let lightingRaf = 0
+
+let displacementDirty = true
+let lightingDirty = true
 
 const effectiveDepth = computed(() =>
   Math.min(
@@ -81,26 +92,33 @@ function measure() {
   radius.value = Math.max(0, parseFloat(style.borderTopLeftRadius) || 0)
 }
 
-function rebuild() {
+function rebuildDisplacement() {
   const w = width.value
   const h = height.value
+
+  if (!w || !h) return
+
+  const profile = calculateRefractionProfile(IOR)
+
+  dispUrl.value = generateDisplacementMap(
+    w,
+    h,
+    radius.value,
+    effectiveDepth.value,
+    profile,
+    props.splay / 100,
+  )
+}
+
+function rebuildLighting() {
+  const w = width.value
+  const h = height.value
+
   if (!w || !h) return
 
   const depth = effectiveDepth.value
   const dpr = Math.min(2, window.devicePixelRatio || 1)
 
-  // смещение — гладкая карта, хватает 1x
-  const profile = calculateRefractionProfile(IOR)
-  dispUrl.value = generateDisplacementMap(
-    w,
-    h,
-    radius.value,
-    depth,
-    profile,
-    props.splay / 100,
-  )
-
-  // кромка тонкая — рисуем в dpr для чёткости (feImage сам отмасштабирует)
   const edge = {
     angleRad: (props.lightAngle * Math.PI) / 180,
     depth,
@@ -109,24 +127,61 @@ function rebuild() {
     tune: props.tune,
   }
 
+  const mapWidth = Math.round(w * dpr)
+  const mapHeight = Math.round(h * dpr)
+  const mapRadius = radius.value * dpr
+
   specUrl.value = generateSpecularMap(
-    Math.round(w * dpr),
-    Math.round(h * dpr),
-    radius.value * dpr,
+    mapWidth,
+    mapHeight,
+    mapRadius,
     edge,
   )
+
   shadeUrl.value = generateShadeMap(
-    Math.round(w * dpr),
-    Math.round(h * dpr),
-    radius.value * dpr,
+    mapWidth,
+    mapHeight,
+    mapRadius,
     edge,
   )
 }
 
-function scheduleRebuild() {
-  cancelAnimationFrame(raf)
-  raf = requestAnimationFrame(rebuild)
+function scheduleDisplacementRebuild() {
+  displacementDirty = true
+
+  if (!isVisible.value) return
+
+  cancelAnimationFrame(displacementRaf)
+
+  displacementRaf = requestAnimationFrame(() => {
+    rebuildDisplacement()
+    displacementDirty = false
+  })
 }
+
+function scheduleLightingRebuild() {
+  lightingDirty = true
+
+  if (!isVisible.value) return
+
+  cancelAnimationFrame(lightingRaf)
+
+  lightingRaf = requestAnimationFrame(() => {
+    rebuildLighting()
+    lightingDirty = false
+  })
+}
+
+watch(
+  [
+    width,
+    height,
+    radius,
+    () => props.depth,
+    () => props.splay,
+  ],
+  scheduleDisplacementRebuild,
+)
 
 watch(
   [
@@ -137,24 +192,76 @@ watch(
     () => props.lightAngle,
     () => props.lightIntensity,
     () => props.overLight,
-    () => props.splay,
     () => JSON.stringify(props.tune ?? {}),
   ],
-  scheduleRebuild,
+  scheduleLightingRebuild,
 )
 
 onMounted(() => {
   measure()
-  if (typeof ResizeObserver !== 'undefined' && element.value) {
+
+  if (
+    typeof ResizeObserver !== 'undefined' &&
+    element.value
+  ) {
     observer = new ResizeObserver(measure)
     observer.observe(element.value)
   }
-  scheduleRebuild()
+
+  if (
+    typeof IntersectionObserver !== 'undefined' &&
+    element.value
+  ) {
+    visibilityObserver = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry) return
+
+        const visible = entry.isIntersecting
+
+        if (visible === isVisible.value) return
+
+        isVisible.value = visible
+
+        if (visible) {
+          hasInitialized.value = true
+
+          if (displacementDirty) {
+            scheduleDisplacementRebuild()
+          }
+
+          if (lightingDirty) {
+            scheduleLightingRebuild()
+          }
+        }
+
+        if (!visible) {
+          cancelAnimationFrame(displacementRaf)
+          cancelAnimationFrame(lightingRaf)
+        }
+      },
+      {
+        rootMargin: '300px 0px',
+        threshold: 0,
+      },
+    )
+
+    visibilityObserver.observe(element.value)
+  } else {
+    // Fallback для браузеров без IntersectionObserver
+    isVisible.value = true
+    hasInitialized.value = true
+
+    scheduleDisplacementRebuild()
+    scheduleLightingRebuild()
+  }
 })
 
 onUnmounted(() => {
   observer?.disconnect()
-  cancelAnimationFrame(raf)
+  visibilityObserver?.disconnect()
+
+  cancelAnimationFrame(displacementRaf)
+  cancelAnimationFrame(lightingRaf)
 })
 
 // Figma frost = blur radius, SVG stdDeviation ≈ radius / 2

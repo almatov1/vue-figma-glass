@@ -47,24 +47,58 @@ function roundedRectSDF(
 }
 
 /** Обход только пикселей в полосе `band` от края */
+
 function forEachEdgePixel(
   w: number,
   h: number,
   radius: number,
   band: number,
-  cb: (index: number, fromEdge: number, nx: number, ny: number, aa: number) => void,
+  cb: (
+    index: number,
+    fromEdge: number,
+    nx: number,
+    ny: number,
+    aa: number,
+  ) => void,
 ) {
+  const b = Math.ceil(band + 1)
+
+  function process(x: number, y: number) {
+    const { dist, nx, ny } = roundedRectSDF(
+      x + 0.5,
+      y + 0.5,
+      w,
+      h,
+      radius,
+    )
+
+    if (dist > 0.5) return
+
+    const fromEdge = Math.max(0, -dist)
+    if (fromEdge >= band) return
+
+    cb(
+      (y * w + x) * 4,
+      fromEdge,
+      nx,
+      ny,
+      clamp(0.5 - dist, 0, 1),
+    )
+  }
+
   for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const box = Math.min(x + 0.5, w - x - 0.5, y + 0.5, h - y - 0.5)
-      if (box > band) continue
+    if (y < b || y >= h - b) {
+      for (let x = 0; x < w; x++) {
+        process(x, y)
+      }
+    } else {
+      for (let x = 0; x < Math.min(b, w); x++) {
+        process(x, y)
+      }
 
-      const { dist, nx, ny } = roundedRectSDF(x + 0.5, y + 0.5, w, h, radius)
-      if (dist > 0.5) continue
-      const fromEdge = Math.max(0, -dist)
-      if (fromEdge >= band) continue
-
-      cb((y * w + x) * 4, fromEdge, nx, ny, clamp(0.5 - dist, 0, 1))
+      for (let x = Math.max(b, w - b); x < w; x++) {
+        process(x, y)
+      }
     }
   }
 }
