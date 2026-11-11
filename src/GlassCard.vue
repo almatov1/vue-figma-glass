@@ -278,51 +278,28 @@ const svgReady = computed(
 </script>
 
 <template>
-  <div ref="element" v-bind="$attrs" class="vue-figma-glass" :style="{ '--glass-filter': `url(#${filterId})` }">
+  <div ref="element" v-bind="$attrs" class="vue-figma-glass" :style="{
+    '--glass-filter': `url(#${filterId})`,
+    '--glass-shade': `url('${shadeUrl}')`,
+    '--glass-spec': `url('${specUrl}')`,
+  }">
     <slot />
   </div>
 
   <svg v-if="svgReady" xmlns="http://www.w3.org/2000/svg" width="0" height="0" class="vue-figma-glass-defs"
     aria-hidden="true">
     <defs>
+
       <filter :id="filterId" filterUnits="userSpaceOnUse" primitiveUnits="userSpaceOnUse"
         color-interpolation-filters="sRGB" x="0" y="0" :width="width" :height="height">
-        <!-- Frost -->
         <feGaussianBlur in="SourceGraphic" :stdDeviation="blurStd" result="blurred" />
 
-        <!-- Карта смещения -->
         <feImage :href="dispUrl" x="0" y="0" :width="width" :height="height" preserveAspectRatio="none"
           result="disp_map" />
 
-        <!-- Дисперсия: каналы отдельно, альфа = 1, склейка через screen -->
-        <template v-if="dispersion > 0">
-          <feColorMatrix in="blurred" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0 1" result="r0" />
-          <feColorMatrix in="blurred" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 0 1" result="g0" />
-          <feColorMatrix in="blurred" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 0 1" result="b0" />
-
-          <feDisplacementMap in="r0" in2="disp_map" :scale="redScale" xChannelSelector="R" yChannelSelector="G"
-            result="r1" />
-          <feDisplacementMap in="g0" in2="disp_map" :scale="scale" xChannelSelector="R" yChannelSelector="G"
-            result="g1" />
-          <feDisplacementMap in="b0" in2="disp_map" :scale="blueScale" xChannelSelector="R" yChannelSelector="G"
-            result="b1" />
-
-          <feBlend in="r1" in2="g1" mode="screen" result="rg" />
-          <feBlend in="rg" in2="b1" mode="screen" result="rgb" />
-          <feBlend in="rgb" in2="blurred" mode="normal" result="displaced" />
-        </template>
-        <feDisplacementMap v-else in="blurred" in2="disp_map" :scale="scale" xChannelSelector="R" yChannelSelector="G"
-          result="displaced" />
-
-        <!-- Серое затемнение -->
-        <feImage :href="shadeUrl" x="0" y="0" :width="width" :height="height" preserveAspectRatio="none"
-          result="shade" />
-        <feBlend in="shade" in2="displaced" mode="normal" result="with_shade" />
-
-        <!-- Белая кромка и полоса -->
-        <feImage :href="specUrl" x="0" y="0" :width="width" :height="height" preserveAspectRatio="none" result="spec" />
-        <feBlend in="spec" in2="with_shade" mode="screen" />
+        <feDisplacementMap in="blurred" in2="disp_map" :scale="scale" xChannelSelector="R" yChannelSelector="G" />
       </filter>
+
     </defs>
   </svg>
 </template>
@@ -343,15 +320,29 @@ const svgReady = computed(
   pointer-events: none;
 }
 
-.vue-figma-glass::before {
-  z-index: -1;
-  background: rgba(255, 255, 255, 0.06);
-}
-
+/* Преломление фона */
 .vue-figma-glass::after {
   z-index: -2;
   backdrop-filter: var(--glass-filter);
   -webkit-backdrop-filter: var(--glass-filter);
+}
+
+/* Тени + блики */
+.vue-figma-glass::before {
+  z-index: -1;
+
+  background-image:
+    var(--glass-spec),
+    var(--glass-shade);
+
+  background-size:
+    100% 100%,
+    100% 100%;
+
+  background-position: center;
+  background-repeat: no-repeat;
+
+  background-color: rgba(255, 255, 255, 0.06);
 }
 
 .vue-figma-glass-defs {
