@@ -198,7 +198,6 @@ function lightDir(angleRad: number) {
  * - Light intensity: 80%
  * - Refraction: 80
  * - Depth: 20
- * - Dispersion: 50
  * - Frost: 4
  * - Splay: 0
  *

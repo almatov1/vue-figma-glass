@@ -14,7 +14,6 @@ const props = withDefaults(
   defineProps<{
     refraction?: number
     depth?: number
-    dispersion?: number
     frost?: number
     splay?: number
     lightAngle?: number
@@ -26,7 +25,6 @@ const props = withDefaults(
   {
     refraction: 80,
     depth: 20,
-    dispersion: 50,
     frost: 4,
     splay: 0,
     lightAngle: -45,
@@ -42,7 +40,6 @@ const IOR = 1.5
 const element = ref<HTMLElement | null>(null)
 
 const isVisible = ref(false)
-const hasInitialized = ref(false)
 
 let visibilityObserver: IntersectionObserver | undefined
 
@@ -223,8 +220,6 @@ onMounted(() => {
         isVisible.value = visible
 
         if (visible) {
-          hasInitialized.value = true
-
           if (displacementDirty) {
             scheduleDisplacementRebuild()
           }
@@ -249,7 +244,6 @@ onMounted(() => {
   } else {
     // Fallback для браузеров без IntersectionObserver
     isVisible.value = true
-    hasInitialized.value = true
 
     scheduleDisplacementRebuild()
     scheduleLightingRebuild()
@@ -266,11 +260,6 @@ onUnmounted(() => {
 
 // Figma frost = blur radius, SVG stdDeviation ≈ radius / 2
 const blurStd = computed(() => (props.overLight ? 1 : props.frost) / 2)
-const dispersionK = computed(
-  () => Math.min(1, Math.max(0, props.dispersion / 100)) * 0.12,
-)
-const redScale = computed(() => scale.value * (1 + dispersionK.value))
-const blueScale = computed(() => scale.value * (1 - dispersionK.value))
 
 const svgReady = computed(
   () => width.value > 0 && !!dispUrl.value && !!specUrl.value && !!shadeUrl.value,
